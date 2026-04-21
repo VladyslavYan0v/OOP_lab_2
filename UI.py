@@ -1,32 +1,42 @@
 import tkinter as tk
+from tkinter import messagebox
+import crypto_engine
 
 diffuculty = "O(n)"
 time_use = 0.452
 memory_usage = 2.4
 
 class AlgorithmStrategy:
-    def execute(self, data: str):
+    def execute(self, data: str) -> str:
         pass
 
-class ElGamalAdapter(AlgorithmStrategy):
-    def __init__(self):
-        pass
+class CppCipherAdapter(AlgorithmStrategy):
+    def __init__(self, chipher_type):
+        self.facade = crypto_engine.CryptoFacade()
+        self.type = chipher_type
+
+        self.config = crypto_engine.CryptoConfig()
+        self.config.rsaE, self.config.rsaD, self.config.rsaN = 17, 2753, 3233
+        self.config.shamirE, self.config.shamirD, self.config.shamirP = 11, 2921, 3571
+
     def execute(self, data: str) -> str:
         try:
-            m_value = int(data) % 27
-
-            #result = elgamal_cpp.encrypt(m_value)
-
-            #return f"k={result.k}, pair: ({result.a}, {result.b})"
-        except ValueError:
-            return "Error: Please enter a number"
+            int_data = [ord(c) for c in data]
+            encrypted = self.facade.sendSecretMessage(int_data, self.type, self.config)
+            return " ".join(map(str, encrypted))
+        except Exception as e:
+            return f"C++ Error: {str(e)}"
 
 class AlgorithmFactory:
     @staticmethod
     def get_algorithm(name):
         match name:
-            case "ElGamal GF(27)":
-                return ElGamalAdapter()
+            case "RSA Ecryption":
+                return CppCipherAdapter(crypto_engine.ChipherType.RSA)
+            case "Shamir Protocol":
+                return CppCipherAdapter(crypto_engine.CipherType.SHAMIR)
+            case "Double Secure":
+                return CppCipherAdapter(crypto_engine.CipherType.DOUBLE_SECURE)
             case _:
                 return None
 
@@ -36,10 +46,11 @@ class UI():
         self.title = "title"
         self.root.geometry("1280x720")
         self.root.configure(bg="#E5E8F0")
+        
+        self.current_algorithm = None
         self.encrypted_message = ""
 
-        self.algorithms = ["algorithm 1", "algorithm 1", "algorithm 1", "algorithm 1", "algorithm 1", "algorithm 1",
-                          "algorithm 1", "algorithm 1", "algorithm 1", "algorithm 1"]
+        self.algorithms = ["RSA Encryption", "Shamir Protocol", "Double Secure"]
 
         self.frame = tk.Frame(self.root, width=300, bg="#FFFFFF", height=1280)
         self.frame.pack(side="left", fill="y")
@@ -62,8 +73,11 @@ class UI():
 
         
     def algorithm_menu(self, algorithm_name):
+        self.current_algorithm = AlgorithmFactory.get_algorithm(algorithm_name)
+
         for widget in self.algorithm_frame.winfo_children():
             widget.destroy()
+
         self.difficulty_label = tk.Label(self.algorithm_frame, text=diffuculty, fg="black", font=("Arial black", 24))
         self.difficulty_label.place(x=10, y=50)
         self.time_usage_label = tk.Label(self.algorithm_frame, text=f"{time_use}ms", fg="black", font=("Arial black", 24))
@@ -87,11 +101,14 @@ class UI():
         self.enter_text.bind('<Return>', self.handle_enter)
 
     def handle_enter(self, event=None):
+        if self.current_algorithm is None:
+            messagebox.showwarning("Warning", "Please select an algorithm first")
+            return
+        
         message_to_encrypt = self.enter_text.get()
 
-        #self.encrypted_message = self.current_algorithm.execute(input_text)
+        self.encrypted_message = self.current_algorithm.execute(message_to_encrypt)
 
-        self.encrypted_message = message_to_encrypt
         self.encrypted_message_label.config(text=self.encrypted_message)
         self.enter_text.delete(0, tk.END)
 
