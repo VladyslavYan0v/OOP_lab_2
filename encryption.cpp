@@ -1,5 +1,6 @@
 #include "common.h"
 #include "productivity.h"
+#include "tests.h"
 #include <iostream>
 #include <vector>
 #include <memory>
@@ -356,6 +357,19 @@ int main() {
         5,                 // зсув для цезаря
         170                // ключ для XOR
     };
+
+    CryptoFacade facade;
+    MessageBuilder builder;
+    runAutomatedTests(facade, builder, myConfig);
+    cout << "=== SAVED PERFORMANCE METRICS (UNIT TESTS ONLY) ===\n";
+    const auto& testMetrics = MetricsCollector::getInstance().getMetrics();
+    for (const auto& metric : testMetrics) {
+        cout << "Algorithm: " << metric.algorithmName
+            << "\t| Op: " << metric.operation
+            << "\t| Time: " << metric.timeMs << " ms"
+            << "\t| Memory: " << metric.memoryBytes << " bytes\n";
+    }
+    cout << "======================================================\n\n";
 
     string secretText;
     cout << "Enter your secret message: ";
