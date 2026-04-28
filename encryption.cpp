@@ -6,6 +6,8 @@
 #include <string>
 #include <chrono>
 #include <algorithm>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 using namespace std;
 
@@ -436,4 +438,28 @@ int main() {
     MetricsCollector::getInstance().saveToBinary("full_performance_stats.bin");
 
     return 0;
+}
+
+namespace py = pybind11;
+
+PYBIND11_MODULE(crypto_engine, m) {
+    py::enum_<CipherType>(m, "CipherType")
+        .value("RSA", CipherType::RSA)
+        .value("SHAMIR", CipherType::SHAMIR)
+        .value("DOUBLE_SECURE", CipherType::DOUBLE_SECURE)
+        .export_values();
+
+    py::class_<CryptoConfig>(m, "CryptoConfig")
+        .def(py::init<>())
+        .def_readwrite("rsaE", &CryptoConfig::rsaE)
+        .def_readwrite("rsaD", &CryptoConfig::rsaD)
+        .def_readwrite("rsaN", &CryptoConfig::rsaN)
+        .def_readwrite("shamirE", &CryptoConfig::shamirE)
+        .def_readwrite("shamirD", &CryptoConfig::shamirD)
+        .def_readwrite("shamirP", &CryptoConfig::shamirP);
+
+    py::class_<CryptoFacade>(m, "CryptoFacade")
+        .def(py::init<>())
+        .def("sendSecretMessage", &CryptoFacade::sendSecretMessage)
+        .def("readSecretMessage", &CryptoFacade::readSecretMessage);
 }
