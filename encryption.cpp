@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <algorithm>
 
 using namespace std;
 
@@ -20,6 +21,8 @@ int modExp(int base, int exp, int mod) {
 struct CryptoConfig {
     int rsaE, rsaD, rsaN;
     int shamirE, shamirD, shamirP;
+    int caesarShift;
+    int xorKey;
 };
 
 // ТВІРНІ ПАТЕРНИ 
@@ -72,15 +75,16 @@ public:
     MessageMemento save() { return MessageMemento(data); }
     void restore(const MessageMemento& memento) { data = memento.getState(); }
     vector<int> build() { return data; }
+    void clear() { data.clear(); }
 };
 
 // СТРУКТУРНІ ПАТЕРНИ 
 
-class IAsymmetricCipher {
+class ICipher {
 public:
     virtual vector<int> encrypt(const vector<int>& data) = 0;
     virtual vector<int> decrypt(const vector<int>& data) = 0;
-    virtual ~IAsymmetricCipher() = default;
+    virtual ~ICipher() = default;
 };
 
 // 4. Adapter: Дозволяє використовувати "старий" клас LegacyShamir через новий інтерфейс.
@@ -94,7 +98,7 @@ public:
     int decryptBlock(int data) { return modExp(data, decKey, p); }
 };
 
-class ShamirAdapter : public IAsymmetricCipher {
+class ShamirAdapter : public ICipher {
 private:
     LegacyShamir legacyCipher;
 public:
@@ -115,18 +119,18 @@ public:
 
 // 5. Decorator: Динамічно додає нову поведінку (вимірювання часу) до шифраторів.
 
-class CipherDecorator : public IAsymmetricCipher {
+class CipherDecorator : public ICipher {
 protected:
-    shared_ptr<IAsymmetricCipher> wrappee;
+    shared_ptr<ICipher> wrappee;
 public:
-    CipherDecorator(shared_ptr<IAsymmetricCipher> cipher) : wrappee(cipher) {}
+    CipherDecorator(shared_ptr<ICipher> cipher) : wrappee(cipher) {}
     vector<int> encrypt(const vector<int>& data) override { return wrappee->encrypt(data); }
     vector<int> decrypt(const vector<int>& data) override { return wrappee->decrypt(data); }
 };
 
 class TimingDecorator : public CipherDecorator {
 public:
-    TimingDecorator(shared_ptr<IAsymmetricCipher> cipher) : CipherDecorator(cipher) {}
+    TimingDecorator(shared_ptr<ICipher> cipher) : CipherDecorator(cipher) {}
     vector<int> encrypt(const vector<int>& data) override {
         auto start = chrono::high_resolution_clock::now();
         vector<int> result = wrappee->encrypt(data);
@@ -145,11 +149,11 @@ public:
 
 // 6. Composite: Дозволяє згрупувати декілька алгоритмів і працювати з ними як з одним.
 
-class CipherChain : public IAsymmetricCipher {
+class CipherChain : public ICipher {
 private:
-    vector<shared_ptr<IAsymmetricCipher>> ciphers;
+    vector<shared_ptr<ICipher>> ciphers;
 public:
-    void addCipher(shared_ptr<IAsymmetricCipher> cipher) { ciphers.push_back(cipher); }
+    void addCipher(shared_ptr<ICipher> cipher) { ciphers.push_back(cipher); }
     vector<int> encrypt(const vector<int>& data) override {
         vector<int> currentData = data;
         for (auto& cipher : ciphers) currentData = cipher->encrypt(currentData);
@@ -168,7 +172,7 @@ public:
 
 // 7. Strategy: Інкапсулює алгоритм RSA для взаємозамінності з іншими шифрами.
 
-class RSACipher : public IAsymmetricCipher {
+class RSACipher : public ICipher {
 private:
     int e, d, n;
 public:
@@ -187,25 +191,75 @@ public:
     }
 };
 
+class CaesarCipher : public ICipher {
+private:
+    int shift;
+public:
+    CaesarCipher(int s) : shift(s) {}
+    vector<int> encrypt(const vector<int>& data) override {
+        CryptoLogger::getInstance().log("Encrypting with Caesar cipher.");
+        vector<int> res;
+        for (int b : data) res.push_back(b + shift);
+        return res;
+    }
+    vector<int> decrypt(const vector<int>& data) override {
+        CryptoLogger::getInstance().log("Decrypting with Caesar cipher.");
+        vector<int> res;
+        for (int b : data) res.push_back(b - shift);
+        return res;
+    }
+};
+
+class XORCipher : public ICipher {
+private:
+    int key;
+public:
+    XORCipher(int k) : key(k) {}
+    vector<int> encrypt(const vector<int>& data) override {
+        CryptoLogger::getInstance().log("Encrypting with XOR cipher.");
+        vector<int> res;
+        for (int b : data) res.push_back(b ^ key);
+        return res;
+    }
+    vector<int> decrypt(const vector<int>& data) override {
+        CryptoLogger::getInstance().log("Decrypting with XOR cipher.");
+        vector<int> res;
+        for (int b : data) res.push_back(b ^ key);
+        return res;
+    }
+};
+
 // ТВІРНІ ПАТЕРНИ
 
 // 8. Factory Method: Централізує логіку створення конкретних шифраторів.
 
-enum class CipherType { RSA, SHAMIR, DOUBLE_SECURE };
+enum class CipherType { RSA, SHAMIR, CAESAR, XOR, DOUBLE_SECURE, MULTI_LAYER_SYMMETRIC };
 
 class CipherFactory {
 public:
-    static shared_ptr<IAsymmetricCipher> createCipher(CipherType type, const CryptoConfig& config) {
+    static shared_ptr<ICipher> createCipher(CipherType type, const CryptoConfig& config) {
         if (type == CipherType::RSA) {
             return make_shared<TimingDecorator>(make_shared<RSACipher>(config.rsaE, config.rsaD, config.rsaN));
         }
         else if (type == CipherType::SHAMIR) {
             return make_shared<TimingDecorator>(make_shared<ShamirAdapter>(config.shamirE, config.shamirD, config.shamirP));
         }
+        else if (type == CipherType::CAESAR) {
+            return make_shared<TimingDecorator>(make_shared<CaesarCipher>(config.caesarShift));
+        }
+        else if (type == CipherType::XOR) {
+            return make_shared<TimingDecorator>(make_shared<XORCipher>(config.xorKey));
+        }
         else if (type == CipherType::DOUBLE_SECURE) {
             auto chain = make_shared<CipherChain>();
             chain->addCipher(make_shared<RSACipher>(config.rsaE, config.rsaD, config.rsaN));
             chain->addCipher(make_shared<ShamirAdapter>(config.shamirE, config.shamirD, config.shamirP));
+            return make_shared<TimingDecorator>(chain);
+        }
+        else if (type == CipherType::MULTI_LAYER_SYMMETRIC) {
+            auto chain = make_shared<CipherChain>();
+            chain->addCipher(make_shared<CaesarCipher>(config.caesarShift));
+            chain->addCipher(make_shared<XORCipher>(config.xorKey));
             return make_shared<TimingDecorator>(chain);
         }
         return nullptr;
@@ -236,7 +290,7 @@ private:
     vector<ITransferObserver*> observers;
 public:
     void addObserver(ITransferObserver* obs) { observers.push_back(obs); }
-    vector<int> transfer(const vector<int>& rawData, shared_ptr<IAsymmetricCipher> cipher) {
+    vector<int> transfer(const vector<int>& rawData, shared_ptr<ICipher> cipher) {
         vector<int> formatted = formatData(rawData);
         vector<int> encrypted = cipher->encrypt(formatted);
         vector<int> finalData = addHeader(encrypted);
@@ -296,32 +350,80 @@ public:
 
 int main() {
     CryptoConfig myConfig = {
-        17, 2753, 3233,
-        11, 2921, 3571
+        17, 2753, 3233,    // Ключі RSA
+        11, 2921, 3571,    // Ключі Shamir
+        5,                 // Зсув для Цезаря
+        170                // Ключ для XOR
     };
 
     CryptoFacade facade;
     MessageBuilder builder;
 
-    vector<int> originalMessage = builder.addNumber(42).addString("KNU").build();
+    string secretText;
+    cout << "Enter your secret message: ";
+    getline(cin, secretText); 
+    cout << "\n";
 
-    cout << "=== INPUT ARRAY ===" << endl;
+    vector<int> originalMessage = builder.addString(secretText).build();
+
+    cout << "=== INPUT ARRAY (ASCII) ===" << endl;
     for (int val : originalMessage) cout << val << " ";
     cout << "\n\n";
+    cout << "==========================================\n";
+    cout << "       STARTING ENCRYPTION TESTS\n";
+    cout << "==========================================\n\n";
 
-    SendMessageCommand sendCmd(&facade, originalMessage, CipherType::DOUBLE_SECURE, myConfig);
-    sendCmd.execute();
-    vector<int> sentData = sendCmd.getResult();
-
-    cout << "=== ENCRYPTED ARRAY ===" << endl;
-    for (int val : sentData) cout << val << " ";
+    cout << "--- 1. Testing RSA ALGORITHM ---" << endl;
+    SendMessageCommand rsaCmd(&facade, originalMessage, CipherType::RSA, myConfig);
+    rsaCmd.execute();
+    vector<int> rsaReceived = facade.readSecretMessage(rsaCmd.getResult(), CipherType::RSA, myConfig);
+    cout << "RSA Decrypted Text: ";
+    for (int val : rsaReceived) cout << static_cast<char>(val);
     cout << "\n\n";
 
-    vector<int> receivedData = facade.readSecretMessage(sentData, CipherType::DOUBLE_SECURE, myConfig);
+    cout << "--- 2. Testing SHAMIR PROTOCOL ---" << endl;
+    SendMessageCommand shamirCmd(&facade, originalMessage, CipherType::SHAMIR, myConfig);
+    shamirCmd.execute();
+    vector<int> shamirReceived = facade.readSecretMessage(shamirCmd.getResult(), CipherType::SHAMIR, myConfig);
+    cout << "Shamir Decrypted Text: ";
+    for (int val : shamirReceived) cout << static_cast<char>(val);
+    cout << "\n\n";
 
-    cout << "=== DECRYPTED ARRAY ===" << endl;
-    for (int val : receivedData) cout << val << " ";
-    cout << "\n";
+    cout << "--- 3. Testing CAESAR CIPHER ---" << endl;
+    SendMessageCommand caesarCmd(&facade, originalMessage, CipherType::CAESAR, myConfig);
+    caesarCmd.execute();
+    vector<int> caesarReceived = facade.readSecretMessage(caesarCmd.getResult(), CipherType::CAESAR, myConfig);
+    cout << "Caesar Decrypted Text: ";
+    for (int val : caesarReceived) cout << static_cast<char>(val);
+    cout << "\n\n";
+
+    cout << "--- 4. Testing XOR CIPHER ---" << endl;
+    SendMessageCommand xorCmd(&facade, originalMessage, CipherType::XOR, myConfig);
+    xorCmd.execute();
+    vector<int> xorReceived = facade.readSecretMessage(xorCmd.getResult(), CipherType::XOR, myConfig);
+    cout << "XOR Decrypted Text: ";
+    for (int val : xorReceived) cout << static_cast<char>(val);
+    cout << "\n\n";
+
+    cout << "--- 5. Testing DOUBLE_SECURE (RSA + Shamir) ---" << endl;
+    SendMessageCommand doubleCmd(&facade, originalMessage, CipherType::DOUBLE_SECURE, myConfig);
+    doubleCmd.execute();
+    vector<int> doubleReceived = facade.readSecretMessage(doubleCmd.getResult(), CipherType::DOUBLE_SECURE, myConfig);
+    cout << "Double Secure Decrypted Text: ";
+    for (int val : doubleReceived) cout << static_cast<char>(val);
+    cout << "\n\n";
+
+    cout << "--- 6. Testing MULTI_LAYER_SYMMETRIC (Caesar + XOR) ---" << endl;
+    SendMessageCommand multiCmd(&facade, originalMessage, CipherType::MULTI_LAYER_SYMMETRIC, myConfig);
+    multiCmd.execute();
+    vector<int> multiReceived = facade.readSecretMessage(multiCmd.getResult(), CipherType::MULTI_LAYER_SYMMETRIC, myConfig);
+    cout << "Multi-Layer Decrypted Text: ";
+    for (int val : multiReceived) cout << static_cast<char>(val);
+    cout << "\n\n";
+
+    cout << "==========================================\n";
+    cout << "       ALL TESTS COMPLETED\n";
+    cout << "==========================================\n";
 
     return 0;
 }
