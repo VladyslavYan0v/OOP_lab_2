@@ -1,3 +1,5 @@
+#include "common.h"
+#include "productivity.h"
 #include <iostream>
 #include <vector>
 #include <memory>
@@ -25,24 +27,6 @@ struct CryptoConfig {
     int xorKey;
 };
 
-// ТВІРНІ ПАТЕРНИ 
-
-// 1. Singleton: Гарантує існування лише одного екземпляра логера.
- 
-class CryptoLogger {
-private:
-    CryptoLogger() {}
-    CryptoLogger(const CryptoLogger&) = delete;
-    CryptoLogger& operator=(const CryptoLogger&) = delete;
-public:
-    static CryptoLogger& getInstance() {
-        static CryptoLogger instance;
-        return instance;
-    }
-    void log(const string& message) {
-        cout << "[LOG]: " << message << endl;
-    }
-};
 
 // ПОВЕДІНКОВІ ПАТЕРНИ
 
@@ -79,13 +63,6 @@ public:
 };
 
 // СТРУКТУРНІ ПАТЕРНИ 
-
-class ICipher {
-public:
-    virtual vector<int> encrypt(const vector<int>& data) = 0;
-    virtual vector<int> decrypt(const vector<int>& data) = 0;
-    virtual ~ICipher() = default;
-};
 
 // 4. Adapter: Дозволяє використовувати "старий" клас LegacyShamir через новий інтерфейс.
 
@@ -166,6 +143,16 @@ public:
         }
         return currentData;
     }
+
+    AlgorithmComplexity getComplexity() const override {
+        string t = "", s = "";
+        for (size_t i = 0; i < ciphers.size(); ++i) {
+            t += ciphers[i]->getComplexity().timeComplexity;
+            s += ciphers[i]->getComplexity().spaceComplexity;
+            if (i < ciphers.size() - 1) { t += " + "; s += " + "; }
+        }
+        return { t, s };
+    }
 };
 
 // ПОВЕДІНКОВІ ПАТЕРНИ 
@@ -189,6 +176,9 @@ public:
         for (int block : data) result.push_back(modExp(block, d, n));
         return result;
     }
+    AlgorithmComplexity getComplexity() const override {
+        return { "O(N * log(E))", "O(N)" };
+    }
 };
 
 class CaesarCipher : public ICipher {
@@ -207,6 +197,9 @@ public:
         vector<int> res;
         for (int b : data) res.push_back(b - shift);
         return res;
+    }
+    AlgorithmComplexity getComplexity() const override {
+        return { "O(N)", "O(N)" };
     }
 };
 
@@ -227,6 +220,9 @@ public:
         for (int b : data) res.push_back(b ^ key);
         return res;
     }
+    AlgorithmComplexity getComplexity() const override {
+        return { "O(N)", "O(N)" };
+    }
 };
 
 // ТВІРНІ ПАТЕРНИ
@@ -239,32 +235,37 @@ class CipherFactory {
 public:
     static shared_ptr<ICipher> createCipher(CipherType type, const CryptoConfig& config) {
         if (type == CipherType::RSA) {
-            return make_shared<TimingDecorator>(make_shared<RSACipher>(config.rsaE, config.rsaD, config.rsaN));
+            auto rsa = make_shared<RSACipher>(config.rsaE, config.rsaD, config.rsaN);
+            return make_shared<PerformanceDecorator>(rsa, "RSA", AlgorithmComplexity{ "O(N * log(E))", "O(N)" });
         }
         else if (type == CipherType::SHAMIR) {
-            return make_shared<TimingDecorator>(make_shared<ShamirAdapter>(config.shamirE, config.shamirD, config.shamirP));
+            auto shamir = make_shared<ShamirAdapter>(config.shamirE, config.shamirD, config.shamirP);
+            return make_shared<PerformanceDecorator>(shamir, "Shamir", AlgorithmComplexity{ "O(N * log(E))", "O(N)" });
         }
         else if (type == CipherType::CAESAR) {
-            return make_shared<TimingDecorator>(make_shared<CaesarCipher>(config.caesarShift));
+            auto caesar = make_shared<CaesarCipher>(config.caesarShift);
+            return make_shared<PerformanceDecorator>(caesar, "Caesar", AlgorithmComplexity{ "O(N)", "O(N)" });
         }
         else if (type == CipherType::XOR) {
-            return make_shared<TimingDecorator>(make_shared<XORCipher>(config.xorKey));
+            auto xorC = make_shared<XORCipher>(config.xorKey);
+            return make_shared<PerformanceDecorator>(xorC, "XOR", AlgorithmComplexity{ "O(N)", "O(N)" });
         }
         else if (type == CipherType::DOUBLE_SECURE) {
             auto chain = make_shared<CipherChain>();
             chain->addCipher(make_shared<RSACipher>(config.rsaE, config.rsaD, config.rsaN));
             chain->addCipher(make_shared<ShamirAdapter>(config.shamirE, config.shamirD, config.shamirP));
-            return make_shared<TimingDecorator>(chain);
+            return make_shared<PerformanceDecorator>(chain, "DoubleSecure", chain->getComplexity());
         }
         else if (type == CipherType::MULTI_LAYER_SYMMETRIC) {
             auto chain = make_shared<CipherChain>();
             chain->addCipher(make_shared<CaesarCipher>(config.caesarShift));
             chain->addCipher(make_shared<XORCipher>(config.xorKey));
-            return make_shared<TimingDecorator>(chain);
+            return make_shared<PerformanceDecorator>(chain, "MultiLayer", chain->getComplexity());
         }
         return nullptr;
     }
 };
+
 
 // ПОВЕДІНКОВІ ПАТЕРНИ
 
@@ -350,18 +351,31 @@ public:
 
 int main() {
     CryptoConfig myConfig = {
-        17, 2753, 3233,    // Ключі RSA
-        11, 2921, 3571,    // Ключі Shamir
-        5,                 // Зсув для Цезаря
-        170                // Ключ для XOR
+        17, 2753, 3233,    // ключі RSA
+        11, 2921, 3571,    // ключі Shamir
+        5,                 // зсув для цезаря
+        170                // ключ для XOR
     };
 
     CryptoFacade facade;
     MessageBuilder builder;
+    runAutomatedTests(facade, builder, myConfig);
+    cout << "=== SAVED PERFORMANCE METRICS (UNIT TESTS ONLY) ===\n";
+    const auto& testMetrics = MetricsCollector::getInstance().getMetrics();
+    for (const auto& metric : testMetrics) {
+        cout << "Algorithm: " << metric.algorithmName
+            << "\t| Op: " << metric.operation
+            << "\t| Time: " << metric.timeMs << " ms"
+            << "\t| Memory: " << metric.memoryBytes << " bytes\n";
+    }
+    cout << "======================================================\n\n";
+
+    MetricsCollector::getInstance().saveToBinary("tests_stats.bin");
+    cout << "\n";
 
     string secretText;
     cout << "Enter your secret message: ";
-    getline(cin, secretText); 
+    getline(cin, secretText);
     cout << "\n";
 
     vector<int> originalMessage = builder.addString(secretText).build();
@@ -423,7 +437,19 @@ int main() {
 
     cout << "==========================================\n";
     cout << "       ALL TESTS COMPLETED\n";
-    cout << "==========================================\n";
+    cout << "==========================================\n\n";
+
+    cout << "=== FINAL PERFORMANCE METRICS REPORT (TESTS + USER) ===\n";
+    const auto& finalMetrics = MetricsCollector::getInstance().getMetrics();
+    for (const auto& metric : finalMetrics) {
+        cout << "Algorithm: " << metric.algorithmName
+            << "\t| Op: " << metric.operation
+            << "\t| Time: " << metric.timeMs << " ms"
+            << "\t| Memory: " << metric.memoryBytes << " bytes\n";
+    }
+    cout << "=======================================================\n";
+
+    MetricsCollector::getInstance().saveToBinary("full_performance_stats.bin");
 
     return 0;
 }
