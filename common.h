@@ -4,6 +4,13 @@
 #include <string>
 #include <fstream>
 
+struct EncryptionResponse {
+    std::vector<int> encryptedData;
+    std::string timeComplexity;
+    double timeMs;
+    size_t memoryBytes;
+};
+
 struct AlgorithmComplexity {
     std::string timeComplexity;
     std::string spaceComplexity;

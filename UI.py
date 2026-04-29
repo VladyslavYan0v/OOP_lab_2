@@ -1,11 +1,8 @@
 import tkinter as tk
 from tkinter import messagebox
+from db_manager import DatabaseManager
 import crypto_engine
 import time
-
-diffuculty = "O(n)"
-time_use = 0.452
-memory_usage = 2.4
 
 class AlgorithmStrategy:
     def execute(self, data: str) -> str:
@@ -15,27 +12,33 @@ class CppCipherAdapter(AlgorithmStrategy):
     def __init__(self, chipher_type):
         self.facade = crypto_engine.CryptoFacade()
         self.type = chipher_type
-
         self.config = crypto_engine.CryptoConfig()
+        
         self.config.rsaE, self.config.rsaD, self.config.rsaN = 17, 2753, 3233
         self.config.shamirE, self.config.shamirD, self.config.shamirP = 11, 2921, 3571
+        self.config.caesarShift = 5
+        self.config.xorKey = 170
 
     def execute(self, data: str, callback=None) -> str:
         try:
             if callback:
-                callback("Preparing ASCII data", 0)
+                callback("Preparing data", 0)
             
             int_data = [ord(c) for c in data]
 
             if callback:
-                callback(f"Starting {self.type}", 1)
-            
-            encrypted = self.facade.sendSecretMessage(int_data, self.type, self.config)
+                callback(f"Sending to C++", 1)
 
-            if callback:
-                callback("Encrypted successfully", 2)
+            response = self.facade.sendSecretMessage(int_data, self.type, self.config)
+
+            self.last_difficulty = response.timeComplexity
+            self.last_time = response.timeMs
+            self.last_memory = response.memoryBytes / 1024
             
-            return " ".join(map(str, encrypted))
+            if callback:
+                callback("Encrypted successful", 2)
+            
+            return " ".join(map(str, response.encryptedData))
         except Exception as e:
             return f"C++ Error: {str(e)}"
 
@@ -47,8 +50,14 @@ class AlgorithmFactory:
                 return CppCipherAdapter(crypto_engine.CipherType.RSA)
             case "Shamir Protocol":
                 return CppCipherAdapter(crypto_engine.CipherType.SHAMIR)
+            case "Caesar Cipher":
+                return CppCipherAdapter(crypto_engine.CipherType.CAESAR)
+            case "XOR Cipher":
+                return CppCipherAdapter(crypto_engine.CipherType.XOR)
             case "Double Secure":
                 return CppCipherAdapter(crypto_engine.CipherType.DOUBLE_SECURE)
+            case "Multi-Layer Symmetric":
+                return CppCipherAdapter(crypto_engine.CipherType.MULTI_LAYER_SYMMETRIC)
             case _:
                 return None
 
@@ -63,7 +72,9 @@ class UI():
         self.encrypted_message = ""
         self.algorithm_buttons = {}
 
-        self.algorithms = ["RSA Encryption", "Shamir Protocol", "Double Secure"]
+        self.db = DatabaseManager()
+
+        self.algorithms = ["RSA Encryption", "Shamir Protocol", "Double Secure", "Caesar Cipher", "XOR Cipher", "Multi-Layer Symmetric"]
 
         self.frame = tk.Frame(self.root, width=300, bg="#FFFFFF", height=1280)
         self.frame.pack(side="left", fill="y")
@@ -88,6 +99,7 @@ class UI():
 
         
     def algorithm_menu(self, algorithm_name):
+        self.current_algorithm_name = algorithm_name
         self.current_algorithm = AlgorithmFactory.get_algorithm(algorithm_name)
 
         for widget in self.algorithm_frame.winfo_children():
@@ -100,11 +112,11 @@ class UI():
 
         self.encrypted_message = ""
 
-        self.difficulty_label = tk.Label(self.algorithm_frame, text=diffuculty, fg="black", font=("Arial black", 24))
+        self.difficulty_label = tk.Label(self.algorithm_frame, fg="black", font=("Arial black", 20))
         self.difficulty_label.place(x=10, y=50)
-        self.time_usage_label = tk.Label(self.algorithm_frame, text=f"{time_use}ms", fg="black", font=("Arial black", 24))
+        self.time_usage_label = tk.Label(self.algorithm_frame, fg="black", font=("Arial black", 24))
         self.time_usage_label.place(x=10, y=150)
-        self.memory_usage_label = tk.Label(self.algorithm_frame, text=f"{memory_usage}Kb", fg="black", font=("Arial black", 24))
+        self.memory_usage_label = tk.Label(self.algorithm_frame, fg="black", font=("Arial black", 24))
         self.memory_usage_label.place(x=10, y=250)
 
         self.diagram_frame = tk.Frame(self.algorithm_frame, width=400, height=300)
@@ -127,14 +139,33 @@ class UI():
             messagebox.showwarning("Warning", "Please select an algorithm first")
             return
         
+        message_to_encrypt = self.enter_text.get()
+        if not message_to_encrypt:
+            return
+
         self.encrypted_message_label.config(text="")
         self.clear_diagram()
-        
-        message_to_encrypt = self.enter_text.get()
 
         self.encrypted_message = self.current_algorithm.execute(message_to_encrypt, callback=self.add_visual_step)
 
+        self.time_usage_label.config(text=f"{self.current_algorithm.last_time:.4f}ms")
+        self.difficulty_label.config(text=self.current_algorithm.last_difficulty)
+        self.memory_usage_label.config(text=f"{self.current_algorithm.last_memory:.2f}Kb")
+
         self.encrypted_message_label.config(text=self.encrypted_message)
+
+        try:
+            self.db.save_result(
+                self.current_algorithm_name, 
+                self.enter_text.get(), 
+                self.encrypted_message,
+                self.current_algorithm.last_time,
+                self.current_algorithm.last_difficulty,
+                self.current_algorithm.last_memory
+            )
+        except Exception as e:
+            print(f"Database Error: {e}")
+
         self.enter_text.delete(0, tk.END)
 
     def clear_diagram(self):

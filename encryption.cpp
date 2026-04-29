@@ -94,6 +94,9 @@ public:
         for (int block : data) result.push_back(legacyCipher.decryptBlock(block));
         return result;
     }
+    AlgorithmComplexity getComplexity() const override {
+        return { "O(N * log(E))", "O(N)" };
+    }
 };
 
 // 5. Decorator: Динамічно додає нову поведінку (вимірювання часу) до шифраторів.
@@ -319,10 +322,20 @@ private:
     AuditSystem auditor;
 public:
     CryptoFacade() { transferProtocol.addObserver(&auditor); }
-    vector<int> sendSecretMessage(const vector<int>& messageArray, CipherType type, const CryptoConfig& config) {
-        auto cipher = CipherFactory::createCipher(type, config);
-        return transferProtocol.transfer(messageArray, cipher);
-    }
+    EncryptionResponse sendSecretMessage(const vector<int>& messageArray, CipherType type, const CryptoConfig& config) {
+    auto cipher = CipherFactory::createCipher(type, config);
+    std::vector<int> result = transferProtocol.transfer(messageArray, cipher);
+    
+    const auto& history = MetricsCollector::getInstance().getMetrics();
+    const auto& lastMetric = history.back(); 
+
+    return {
+        result,
+        cipher->getComplexity().timeComplexity,
+        lastMetric.timeMs,
+        lastMetric.memoryBytes
+    };
+}
     vector<int> readSecretMessage(const vector<int>& encryptedArray, CipherType type, const CryptoConfig& config) {
         auto cipher = CipherFactory::createCipher(type, config);
         vector<int> dataOnly(encryptedArray.begin() + 1, encryptedArray.end());
@@ -340,14 +353,14 @@ private:
     vector<int> message;
     CipherType type;
     CryptoConfig config;
-    vector<int> result;
+    EncryptionResponse result;
 public:
     SendMessageCommand(CryptoFacade* f, const vector<int>& m, CipherType t, const CryptoConfig& c)
         : facade(f), message(m), type(t), config(c) {}
     void execute() {
         result = facade->sendSecretMessage(message, type, config);
     }
-    vector<int> getResult() const { return result; }
+    EncryptionResponse getResult() const { return result; }
 };
 
 
@@ -358,6 +371,9 @@ int main() {
         5,                 // зсув для цезаря
         170                // ключ для XOR
     };
+
+    CryptoFacade facade;
+    MessageBuilder builder;
 
     string secretText;
     cout << "Enter your secret message: ";
@@ -376,7 +392,7 @@ int main() {
     cout << "--- 1. Testing RSA ALGORITHM ---" << endl;
     SendMessageCommand rsaCmd(&facade, originalMessage, CipherType::RSA, myConfig);
     rsaCmd.execute();
-    vector<int> rsaReceived = facade.readSecretMessage(rsaCmd.getResult(), CipherType::RSA, myConfig);
+    vector<int> rsaReceived = facade.readSecretMessage(rsaCmd.getResult().encryptedData, CipherType::RSA, myConfig);
     cout << "RSA Decrypted Text: ";
     for (int val : rsaReceived) cout << static_cast<char>(val);
     cout << "\n\n";
@@ -384,7 +400,7 @@ int main() {
     cout << "--- 2. Testing SHAMIR PROTOCOL ---" << endl;
     SendMessageCommand shamirCmd(&facade, originalMessage, CipherType::SHAMIR, myConfig);
     shamirCmd.execute();
-    vector<int> shamirReceived = facade.readSecretMessage(shamirCmd.getResult(), CipherType::SHAMIR, myConfig);
+    vector<int> shamirReceived = facade.readSecretMessage(shamirCmd.getResult().encryptedData, CipherType::SHAMIR, myConfig);
     cout << "Shamir Decrypted Text: ";
     for (int val : shamirReceived) cout << static_cast<char>(val);
     cout << "\n\n";
@@ -392,7 +408,7 @@ int main() {
     cout << "--- 3. Testing CAESAR CIPHER ---" << endl;
     SendMessageCommand caesarCmd(&facade, originalMessage, CipherType::CAESAR, myConfig);
     caesarCmd.execute();
-    vector<int> caesarReceived = facade.readSecretMessage(caesarCmd.getResult(), CipherType::CAESAR, myConfig);
+    vector<int> caesarReceived = facade.readSecretMessage(caesarCmd.getResult().encryptedData, CipherType::CAESAR, myConfig);
     cout << "Caesar Decrypted Text: ";
     for (int val : caesarReceived) cout << static_cast<char>(val);
     cout << "\n\n";
@@ -400,7 +416,7 @@ int main() {
     cout << "--- 4. Testing XOR CIPHER ---" << endl;
     SendMessageCommand xorCmd(&facade, originalMessage, CipherType::XOR, myConfig);
     xorCmd.execute();
-    vector<int> xorReceived = facade.readSecretMessage(xorCmd.getResult(), CipherType::XOR, myConfig);
+    vector<int> xorReceived = facade.readSecretMessage(xorCmd.getResult().encryptedData, CipherType::XOR, myConfig);
     cout << "XOR Decrypted Text: ";
     for (int val : xorReceived) cout << static_cast<char>(val);
     cout << "\n\n";
@@ -408,7 +424,7 @@ int main() {
     cout << "--- 5. Testing DOUBLE_SECURE (RSA + Shamir) ---" << endl;
     SendMessageCommand doubleCmd(&facade, originalMessage, CipherType::DOUBLE_SECURE, myConfig);
     doubleCmd.execute();
-    vector<int> doubleReceived = facade.readSecretMessage(doubleCmd.getResult(), CipherType::DOUBLE_SECURE, myConfig);
+    vector<int> doubleReceived = facade.readSecretMessage(doubleCmd.getResult().encryptedData, CipherType::DOUBLE_SECURE, myConfig);
     cout << "Double Secure Decrypted Text: ";
     for (int val : doubleReceived) cout << static_cast<char>(val);
     cout << "\n\n";
@@ -416,7 +432,7 @@ int main() {
     cout << "--- 6. Testing MULTI_LAYER_SYMMETRIC (Caesar + XOR) ---" << endl;
     SendMessageCommand multiCmd(&facade, originalMessage, CipherType::MULTI_LAYER_SYMMETRIC, myConfig);
     multiCmd.execute();
-    vector<int> multiReceived = facade.readSecretMessage(multiCmd.getResult(), CipherType::MULTI_LAYER_SYMMETRIC, myConfig);
+    vector<int> multiReceived = facade.readSecretMessage(multiCmd.getResult().encryptedData, CipherType::MULTI_LAYER_SYMMETRIC, myConfig);
     cout << "Multi-Layer Decrypted Text: ";
     for (int val : multiReceived) cout << static_cast<char>(val);
     cout << "\n\n";
@@ -443,9 +459,18 @@ int main() {
 namespace py = pybind11;
 
 PYBIND11_MODULE(crypto_engine, m) {
+    py::class_<EncryptionResponse>(m, "EncryptionResponse")
+        .def_readwrite("encryptedData", &EncryptionResponse::encryptedData)
+        .def_readwrite("timeComplexity", &EncryptionResponse::timeComplexity)
+        .def_readwrite("timeMs", &EncryptionResponse::timeMs)
+        .def_readwrite("memoryBytes", &EncryptionResponse::memoryBytes);
+
     py::enum_<CipherType>(m, "CipherType")
         .value("RSA", CipherType::RSA)
         .value("SHAMIR", CipherType::SHAMIR)
+        .value("CAESAR", CipherType::CAESAR)
+        .value("XOR", CipherType::XOR)
+        .value("MULTI_LAYER_SYMMETRIC", CipherType::MULTI_LAYER_SYMMETRIC)
         .value("DOUBLE_SECURE", CipherType::DOUBLE_SECURE)
         .export_values();
 
@@ -456,10 +481,11 @@ PYBIND11_MODULE(crypto_engine, m) {
         .def_readwrite("rsaN", &CryptoConfig::rsaN)
         .def_readwrite("shamirE", &CryptoConfig::shamirE)
         .def_readwrite("shamirD", &CryptoConfig::shamirD)
-        .def_readwrite("shamirP", &CryptoConfig::shamirP);
+        .def_readwrite("shamirP", &CryptoConfig::shamirP)
+        .def_readwrite("caesarShift", &CryptoConfig::caesarShift)
+        .def_readwrite("xorKey", &CryptoConfig::xorKey);
 
     py::class_<CryptoFacade>(m, "CryptoFacade")
         .def(py::init<>())
-        .def("sendSecretMessage", &CryptoFacade::sendSecretMessage)
-        .def("readSecretMessage", &CryptoFacade::readSecretMessage);
+        .def("sendSecretMessage", &CryptoFacade::sendSecretMessage); 
 }
